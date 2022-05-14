@@ -138,7 +138,7 @@ class COCOeval:
         p.maxDets = sorted(p.maxDets)
         self.params=p
 
-        self._prepare()
+        self._prepare()                                         # 预处理
         # loop through images, area range, max detection number
         catIds = p.catIds if p.useCats else [-1]
 
@@ -148,9 +148,11 @@ class COCOeval:
             computeIoU = self.computeOks
         self.ious = {(imgId, catId): computeIoU(imgId, catId) \
                         for imgId in p.imgIds
-                        for catId in catIds}
+                        for catId in catIds}                    # 计算iou，索引是个key，其值为(imgId, catId)，表示某张图片的某个类别中所有实例的iou
+                                                                # 这个(imgId, catId)之下M×N的矩阵，M是pred的数目，N是GT的数目
+                                                                # 函数中其他参数存在self.pram里
 
-        evaluateImg = self.evaluateImg
+        evaluateImg = self.evaluateImg                          # 评估Img
         maxDet = p.maxDets[-1]
         self.evalImgs = [evaluateImg(imgId, catId, areaRng, maxDet)
                  for catId in catIds
@@ -163,6 +165,7 @@ class COCOeval:
 
     def computeIoU(self, imgId, catId):
         p = self.params
+        # 是否忽略类别
         if p.useCats:
             gt = self._gts[imgId,catId]
             dt = self._dts[imgId,catId]
@@ -239,6 +242,7 @@ class COCOeval:
         :return: dict (single image results)
         '''
         p = self.params
+        # 是否忽略类别
         if p.useCats:
             gt = self._gts[imgId,catId]
             dt = self._dts[imgId,catId]
@@ -247,7 +251,8 @@ class COCOeval:
             dt = [_ for cId in p.catIds for _ in self._dts[imgId,cId]]
         if len(gt) == 0 and len(dt) ==0:
             return None
-
+        
+        # 是否忽略这个GT：1、g['ignore'] = 1; 2、g['area']过大或过小。
         for g in gt:
             if g['ignore'] or (g['area']<aRng[0] or g['area']>aRng[1]):
                 g['_ignore'] = 1
@@ -255,46 +260,51 @@ class COCOeval:
                 g['_ignore'] = 0
 
         # sort dt highest score first, sort gt ignore last
-        gtind = np.argsort([g['_ignore'] for g in gt], kind='mergesort')
+        gtind = np.argsort([g['_ignore'] for g in gt], kind='mergesort')        # 把g['_ignore'] = 0的放到前面，返回ind
         gt = [gt[i] for i in gtind]
-        dtind = np.argsort([-d['score'] for d in dt], kind='mergesort')
-        dt = [dt[i] for i in dtind[0:maxDet]]
+        dtind = np.argsort([-d['score'] for d in dt], kind='mergesort')         # dt按照d['score']从大到小排序，返回ind
+        dt = [dt[i] for i in dtind[0:maxDet]]                                   # maxDet八成是最大的实例数
         iscrowd = [int(o['iscrowd']) for o in gt]
         # load computed ious
-        ious = self.ious[imgId, catId][:, gtind] if len(self.ious[imgId, catId]) > 0 else self.ious[imgId, catId]
+        ious = self.ious[imgId, catId][:, gtind] if len(self.ious[imgId, catId]) > 0 else self.ious[imgId, catId]   
+        # 按照gtind重排顺序(按照索引)，没筛掉ignore，筛选使用gtIg筛
+        # dt不用筛选，好像也不用排序
 
         T = len(p.iouThrs)
         G = len(gt)
         D = len(dt)
+
         gtm  = np.zeros((T,G))
         dtm  = np.zeros((T,D),object)
         gtIg = np.array([g['_ignore'] for g in gt])
         dtIg = np.zeros((T,D))
-        if not len(ious)==0:
-            for tind, t in enumerate(p.iouThrs):
-                for dind, d in enumerate(dt):
+        if not len(ious)==0:                                                                # 如果筛完还有值
+            for tind, t in enumerate(p.iouThrs):                                            # 对于某一个iou阈值t
+                for dind, d in enumerate(dt):                                               # 对于某一个pred来说
                     # information about best match so far (m=-1 -> unmatched)
                     iou = min([t,1-1e-10])
                     m   = -1
-                    for gind, g in enumerate(gt):
+        # 下边的处理方式是这样：固定dt(按分数从大到小排序)，找寻与其最匹配的(未被匹配过的)gt
+                    for gind, g in enumerate(gt):                                           # 对于某一个GT来说
                         # if this gt already matched, and not a crowd, continue
-                        if gtm[tind,gind]>0 and not iscrowd[gind]:
+                        if gtm[tind,gind]>0 and not iscrowd[gind]:                          # gt被匹配过则找下一个gt
                             continue
                         # if dt matched to reg gt, and on ignore gt, stop
-                        if m>-1 and gtIg[m]==0 and gtIg[gind]==1:
+                        if m>-1 and gtIg[m]==0 and gtIg[gind]==1:               # 匹配到了(m储存匹配的gind)，并且"已匹配的gt"被标记为不忽略，并且"遍历到的gt"被标记为忽略
+                                                                                # 遍历到忽略的gt说明遍历到底了，因为不忽略的都在前面，那么说明这个dt匹配成功，跳出循环
                             break
                         # continue to next gt unless better match made
-                        if ious[dind,gind] < iou:
+                        if ious[dind,gind] < iou:                               # 这个匹配对的iou小于已匹配的，或者太小直接忽略
                             continue
                         # if match successful and best so far, store appropriately
-                        iou=ious[dind,gind]
+                        iou=ious[dind,gind]                                     # 匹配成功，改变当前iou大小和max索引
                         m=gind
                     # if match made store id of match for both dt and gt
                     if m ==-1:
-                        continue
-                    dtIg[tind,dind] = gtIg[m]
-                    dtm[tind,dind]  = gt[m]['id']
-                    gtm[tind,m]     = d['id']
+                        continue                                                # 这里属于完全没匹配到gt
+                    dtIg[tind,dind] = gtIg[m]                                   # 如果这个dt对应的最佳gt本身就是被ignore的，就把这个dt也设置为ignore
+                    dtm[tind,dind]  = gt[m]['id']                               # dtm的对应位置存gt的id
+                    gtm[tind,m]     = d['id']                                   # 同样gtm的对应位置存dt的id
         # set unmatched detections outside of area range to ignore
         a = np.array([d['area']<aRng[0] or d['area']>aRng[1] for d in dt]).reshape((1, len(dt)))
         dtIg = np.logical_or(dtIg, np.logical_and(dtm==0, np.repeat(a,T,0)))
@@ -312,6 +322,13 @@ class COCOeval:
                 'gtIgnore':     gtIg,
                 'dtIgnore':     dtIg,
             }
+        # 返回几个比较重要的值：
+        # aRng：区域大小限制[0]是下界 [1]是上界；
+        # maxDet：最大的pred数
+        # dtIds/gtIds：dt/gt的id（这里的dt和gt都是被排过序的，与之后dtm和gtm的排列顺序相同）
+        # dtm/dtm：dt和gt的匹配结果，是个(len(dt),len(gt))的int矩阵。其中匹配成功时存的是gt/dt的id，失败时存的是0。并且保证一个dt/gt只有一个gt/dt匹配结果。
+        # dtScore：pred的score
+        # dtIgnore/gtIgnore：忽略的mask，和dtm/dtm矩阵维度相同，用于标记其是否忽略这个匹配结果
 
     def accumulate(self, p = None):
         '''
