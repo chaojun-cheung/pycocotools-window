@@ -309,6 +309,8 @@ class COCOeval:
         a = np.array([d['area']<aRng[0] or d['area']>aRng[1] for d in dt]).reshape((1, len(dt)))
         dtIg = np.logical_or(dtIg, np.logical_and(dtm==0, np.repeat(a,T,0)))
         # store results for given image and category
+        ### 首先若要改成miou，则先利用dtm和gtm匹配矩阵找到pred和gt对应，再从self.computeIoU计算出IoU(p.iouType == 'segm')[可以在evaluate函数调用] ###
+        ### 然后return加一项本张图的本类别的miou值，需要考虑dice distance的定义，是和实例有关还是和类别有关 ###
         return {
                 'image_id':     imgId,
                 'category_id':  catId,
@@ -441,7 +443,7 @@ class COCOeval:
         }
         toc = time.time()
         print('DONE (t={:0.2f}s).'.format( toc-tic))
-        
+        ### 这里precision和recall是否有用，没用的话可以考虑抛弃这些东西，只留miou。并且需要注意的是，本函数是包括了所有的图片的，输出的是每一张图片单独的值，且需不需要考虑下面的限制条件 ###
         # param：参数
         # counts：T,R,K,A,M的值
         # date：时间戳
