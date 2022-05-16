@@ -236,7 +236,7 @@ class COCOeval:
                 ious[i, j] = np.sum(np.exp(-e)) / e.shape[0]
         return ious
 
-    def evaluateImg(self, imgId, catId, aRng, maxDet):
+    def evaluateImg(self, imgId, catId, aRng, maxDet):                      # 对于单一图片、单一类别、单一面积阈值来说的评价结果，返回匹配结果
         '''
         perform evaluation for single category and image
         :return: dict (single image results)
@@ -326,7 +326,7 @@ class COCOeval:
         # aRng：区域大小限制[0]是下界 [1]是上界；
         # maxDet：最大的pred数
         # dtIds/gtIds：dt/gt的id（这里的dt和gt都是被排过序的，与之后dtm和gtm的排列顺序相同）
-        # dtm/dtm：dt和gt的匹配结果，是个(len(dt),len(gt))的int矩阵。其中匹配成功时存的是gt/dt的id，失败时存的是0。并且保证一个dt/gt只有一个gt/dt匹配结果。
+        # dtm/gtm：dt和gt的匹配结果，是个(len(iouThrs),len(dt)/len(gt))的int矩阵。其中匹配成功时存的是gt/dt的id，失败时存的是0。并且保证一个dt/gt只有一个gt/dt匹配结果。
         # dtScore：pred的score
         # dtIgnore/gtIgnore：忽略的mask，和dtm/dtm矩阵维度相同，用于标记其是否忽略这个匹配结果
 
@@ -344,11 +344,11 @@ class COCOeval:
         if p is None:
             p = self.params
         p.catIds = p.catIds if p.useCats == 1 else [-1]
-        T           = len(p.iouThrs)
-        R           = len(p.recThrs)
-        K           = len(p.catIds) if p.useCats else 1
-        A           = len(p.areaRng)
-        M           = len(p.maxDets)
+        T           = len(p.iouThrs)                                # 有多少个iouIhrs，用于决定多少iou才匹配，否则不匹配：[0.5:0.05:0.95]
+        R           = len(p.recThrs)                                # recall阈值，[0:.01:1]
+        K           = len(p.catIds) if p.useCats else 1             # 类别数目
+        A           = len(p.areaRng)                                # 区域大小的阈值数，默认多少?
+        M           = len(p.maxDets)                                # 最大实例的数目：[1,10,100]
         precision   = -np.ones((T,R,K,A,M)) # -1 for the precision of absent categories
         recall      = -np.ones((T,K,A,M))
         scores      = -np.ones((T,R,K,A,M))
@@ -357,7 +357,7 @@ class COCOeval:
         _pe = self._paramsEval
         catIds = _pe.catIds if _pe.useCats else [-1]
         setK = set(catIds)
-        setA = set(map(tuple, _pe.areaRng))
+        setA = set(map(tuple, _pe.areaRng))                         # map(A,B)对迭代器B中每个元素执行函数A，这里是将areaRng中每个元素变成元组，原本是A×2的list(list())
         setM = set(_pe.maxDets)
         setI = set(_pe.imgIds)
         # get inds to evaluate
@@ -368,12 +368,12 @@ class COCOeval:
         I0 = len(_pe.imgIds)
         A0 = len(_pe.areaRng)
         # retrieve E at each category, area range, and max number of detections
-        for k, k0 in enumerate(k_list):
-            Nk = k0*A0*I0
-            for a, a0 in enumerate(a_list):
+        for k, k0 in enumerate(k_list):                             # 每个类别
+            Nk = k0*A0*I0                                           # self.evalImgs是个list，其长度为len(k_list)*A0*I0，这相当于是找索引
+            for a, a0 in enumerate(a_list):                         # 每个区域大小的阈值
                 Na = a0*I0
-                for m, maxDet in enumerate(m_list):
-                    E = [self.evalImgs[Nk + Na + i] for i in i_list]
+                for m, maxDet in enumerate(m_list):                 # 每个最大实例数
+                    E = [self.evalImgs[Nk + Na + i] for i in i_list]                                        # 把每张图片的evalImgs搞成一个list，长度是img数
                     E = [e for e in E if not e is None]
                     if len(E) == 0:
                         continue
@@ -381,47 +381,52 @@ class COCOeval:
 
                     # different sorting method generates slightly different results.
                     # mergesort is used to be consistent as Matlab implementation.
-                    inds = np.argsort(-dtScores, kind='mergesort')
+                    inds = np.argsort(-dtScores, kind='mergesort')                                          # 返回索引，按照从大到小排('score')[所有的图片所有的pred]
                     dtScoresSorted = dtScores[inds]
 
-                    dtm  = np.concatenate([e['dtMatches'][:,0:maxDet] for e in E], axis=1)[:,inds]
+                    dtm  = np.concatenate([e['dtMatches'][:,0:maxDet] for e in E], axis=1)[:,inds]          # pred的match矩阵size为：(len(iouThrs), len(dt)=maxDet)
+                                                                                                            # concat后其size为：(len(iouThrs), maxDet*img_num)
                     dtIg = np.concatenate([e['dtIgnore'][:,0:maxDet]  for e in E], axis=1)[:,inds]
                     gtIg = np.concatenate([e['gtIgnore'] for e in E])
-                    npig = np.count_nonzero(gtIg==0 )
+                    # 计算有多少个匹配成功，即多少个gt是有dt匹配的
+                    npig = np.count_nonzero(gtIg==0)                                                        # P数目
                     if npig == 0:
                         continue
-                    tps = np.logical_and(               dtm,  np.logical_not(dtIg) )
-                    fps = np.logical_and(np.logical_not(dtm), np.logical_not(dtIg) )
+                    tps = np.logical_and(               dtm,  np.logical_not(dtIg) )                        # TP位置，匹配的pred(True是匹配的pred)
+                    fps = np.logical_and(np.logical_not(dtm), np.logical_not(dtIg) )                        # FP位置，没匹配的pred(True是没匹配的pred)
 
-                    tp_sum = np.cumsum(tps, axis=1).astype(dtype=np.float)
-                    fp_sum = np.cumsum(fps, axis=1).astype(dtype=np.float)
-                    for t, (tp, fp) in enumerate(zip(tp_sum, fp_sum)):
+                    tp_sum = np.cumsum(tps, axis=1).astype(dtype=np.float)                                  # TP数量，np.cumsum使在axis维上第i-th值等于0-th~i-th值累加，
+                                                                                                            # 维度：(len(iouThrs), maxDet*img_num)
+                    fp_sum = np.cumsum(fps, axis=1).astype(dtype=np.float)                                  # FP数量
+                    for t, (tp, fp) in enumerate(zip(tp_sum, fp_sum)):                                      # len(zip(tp_sum, fp_sum)) == len(iouThrs)
                         tp = np.array(tp)
                         fp = np.array(fp)
                         nd = len(tp)
-                        rc = tp / npig
-                        pr = tp / (fp+tp+np.spacing(1))
+                        rc = tp / npig                                                                      # TP/P(TP/TP+NF) = recall
+                        pr = tp / (fp+tp+np.spacing(1))                                                     # precision np.spacing(1)是个贼小的值
                         q  = np.zeros((R,))
                         ss = np.zeros((R,))
 
                         if nd:
-                            recall[t,k,a,m] = rc[-1]
+                            recall[t,k,a,m] = rc[-1]                                                        # 最后的位置才是求和
                         else:
                             recall[t,k,a,m] = 0
 
                         # numpy is slow without cython optimization for accessing elements
                         # use python array gets significant speed improvement
-                        pr = pr.tolist(); q = q.tolist()
-
+                        pr = pr.tolist(); q = q.tolist()                                                    # array.tolist()
+                                                                                        # rc[i]位置对应pr[i]位置，表示在“只挑选score>某阈值的样本”时的recall和precision
                         for i in range(nd-1, 0, -1):
                             if pr[i] > pr[i-1]:
-                                pr[i-1] = pr[i]
+                                pr[i-1] = pr[i]                                         # 这样做的理由我不理解，但这样保证了precision随着阈值降低而降低(这也太强行了吧) 
 
-                        inds = np.searchsorted(rc, p.recThrs, side='left')
+                        inds = np.searchsorted(rc, p.recThrs, side='left')              # rc是个array，len(rc) = maxDet*img_num，找到recall为多少的时候取的样本的位置
+                                                                                        # 为了画P-R曲线，需要知道recall为各个值时取的样本的位置，并以此计算出对应的precision
                         try:
                             for ri, pi in enumerate(inds):
-                                q[ri] = pr[pi]
-                                ss[ri] = dtScoresSorted[pi]
+                                q[ri] = pr[pi]                                          # 保存precision，其值对应recall分别是0,0.01,0.02,...,0.99,1
+                                ss[ri] = dtScoresSorted[pi]                             # 保存对应recall为0,0.01,0.02,...,0.99,1时的score阈值，即：
+                                                                                        # 在score大于这个阈值的样本被选择的时候，precision的取值为q[ri]，recall值为100·ri
                         except:
                             pass
                         precision[t,:,k,a,m] = np.array(q)
@@ -436,6 +441,14 @@ class COCOeval:
         }
         toc = time.time()
         print('DONE (t={:0.2f}s).'.format( toc-tic))
+        
+        # param：参数
+        # counts：T,R,K,A,M的值
+        # date：时间戳
+        # precision：[T,R,K,A,M]维ndarray，其保存在不同iou阈值、不同recall(0:0.01,1)、不同类别数目、不同区域大小限制、不同最大实例数的precision
+        # recall：[T,K,A,M]维ndarray，其保存在不同iou阈值、不同类别数目、不同区域大小限制、不同最大实例数的precision的recall
+        # scores：[T,R,K,A,M]维ndarray，其保存在不同iou阈值、不同recall(0:0.01,1)、不同类别数目、不同区域大小限制、不同最大实例数的score
+        
 
     def summarize(self):
         '''
